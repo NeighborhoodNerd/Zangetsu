@@ -30,6 +30,28 @@ Aniyomi / Tachiyomi
   Aniyomi/Tachiyomi and retain their original Apache-2.0 headers. The full
   Apache License 2.0 text is included as LICENSE-Apache-2.0.txt.
 
+CryptoJS
+  https://github.com/brix/crypto-js
+  License: MIT
+  Bundled as assets/js/miru/crypto-js.min.js for classic Miru JS extensions.
+
+JSEncrypt
+  https://github.com/travist/jsencrypt
+  License: MIT
+  Bundled as assets/js/miru/jsencrypt.min.js for classic Miru JS extensions.
+
+blueimp-md5
+  https://github.com/blueimp/JavaScript-MD5
+  License: MIT
+  Bundled as assets/js/miru/md5.min.js for classic Miru JS extensions.
+
+Miru extension API
+  https://github.com/miru-project/miru-app
+  https://github.com/miru-project/repo
+  The Miru app itself is AGPL-3.0. Zangetsu does not include miru-app source;
+  it reimplements a compatible JavaScript host so user-installed extensions
+  from public Miru catalogs (class extends Extension, index.json) can run.
+
 Other dependencies (Flutter/Dart packages and Android libraries) are used under
 their respective open-source licenses; refer to each package for details.
 

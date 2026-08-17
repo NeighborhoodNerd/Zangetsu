@@ -2,6 +2,7 @@ import '../aniyomi/aniyomi_filters.dart';
 import '../aniyomi/aniyomi_provider.dart';
 import '../lnreader/lnreader_manager.dart';
 import '../mihon/mihon_filters.dart';
+import '../miru/miru_manager.dart';
 import '../mihon/mihon_manager.dart';
 import '../mihon/mihon_provider.dart';
 import '../models/episode.dart';
@@ -32,6 +33,7 @@ class SourceRepository {
     required PlaybackPrefs prefs,
     MihonManager? mihonManager,
     LnReaderManager? lnrManager,
+    MiruManager? miruManager,
     // Optional so existing tests construct this unchanged; null simply means
     // "no language filtering", which is also the behaviour for a user who has
     // never picked a language set.
@@ -57,13 +59,15 @@ class SourceRepository {
        // instead. Omitting it yields the same "EMPTY registry" behaviour —
        // `lnr:` ids simply never resolve. The injector always passes the
        // real one.
-       _lnrManager = lnrManager;
+       _lnrManager = lnrManager,
+       _miruManager = miruManager;
 
   final ProviderManager _manager;
   final CloudStreamManager _csManager;
   final AniyomiManager _aniManager;
   final MihonManager _mihonManager;
   final LnReaderManager? _lnrManager;
+  final MiruManager? _miruManager;
   final ActiveSourceCubit _active;
   final PlaybackPrefs _prefs;
 
@@ -141,6 +145,8 @@ class SourceRepository {
   /// [_isMihon] — its own prefix so `sourceTypeOf` can type it novel without
   /// disturbing the `mihon:`/`ani:` lines.
   static bool _isLnReader(String id) => id.startsWith('lnr:');
+
+  static bool _isMiru(String id) => id.startsWith('miru:');
 
   /// The currently-active source identifier.
   String get sourceId => _active.state;
@@ -252,6 +258,23 @@ class SourceRepository {
       ..._lnrManager.installedSources.map(
         (s) => (id: s.id, name: s.name, lang: null),
       ),
+    // Only ENABLED Miru sources — a disabled source shouldn't be searched
+    // (same reason CloudStream filters `enabled` above). Installed+disabled
+    // still shows on the Miru Installed tab so it can be turned back on.
+    if (_miruManager != null)
+      ..._miruManager.installedSources
+          .map((s) {
+            final p = _miruManager.get(s.id);
+            return (
+              id: s.id,
+              name: s.name,
+              lang: p?.meta.lang,
+              nsfw: p?.meta.nsfw ?? false,
+              enabled: p?.meta.enabled ?? true,
+            );
+          })
+          .where((s) => s.enabled && (!s.nsfw || _prefs.nsfwSources))
+          .map((s) => (id: s.id, name: s.name, lang: s.lang)),
   ];
 
   /// Base site URL for a source, used to turn a relative item URL into an
@@ -268,6 +291,8 @@ class SourceRepository {
     // `site`), same rationale as Mihon above.
     final l = _lnrManager?.get(sourceId);
     if (l != null) return l.site;
+    final miru = _miruManager?.get(sourceId);
+    if (miru != null) return miru.meta.webSite;
     final p = _aniManager.get(sourceId);
     return p is AniyomiProvider ? p.info.baseUrl : '';
   }
@@ -285,6 +310,9 @@ class SourceRepository {
     }
     if (_isLnReader(sourceId)) {
       return _lnrManager?.get(sourceId)?.displayName ?? sourceId;
+    }
+    if (_isMiru(sourceId)) {
+      return _miruManager?.get(sourceId)?.displayName ?? sourceId;
     }
     return _manager.get(sourceId)?.displayName ?? sourceId;
   }
@@ -305,6 +333,9 @@ class SourceRepository {
     }
     if (_isLnReader(sourceId)) {
       return _lnrManager?.get(sourceId) != null;
+    }
+    if (_isMiru(sourceId)) {
+      return _miruManager?.get(sourceId) != null;
     }
     return _manager.get(sourceId) != null;
   }
@@ -330,6 +361,8 @@ class SourceRepository {
       p = _mihonManager.get(resolved);
     } else if (_isLnReader(resolved)) {
       p = _lnrManager?.get(resolved);
+    } else if (_isMiru(resolved)) {
+      p = _miruManager?.get(resolved);
     } else {
       p = _manager.get(resolved);
     }
@@ -400,18 +433,22 @@ class SourceRepository {
       final p = _providerFor(more.sourceId);
       switch (more.kind) {
         case 'ani_popular':
-          return p.popular(page: page);
+          return await p.popular(page: page);
         case 'ani_latest':
-          return p is AniyomiProvider ? p.latest(page: page) : const [];
+          return p is AniyomiProvider
+              ? await p.latest(page: page)
+              : const [];
         case 'mihon_popular':
-          return p.popular(page: page);
+          return await p.popular(page: page);
         case 'mihon_latest':
-          return p is MihonProvider ? p.latest(page: page) : const [];
+          return p is MihonProvider ? await p.latest(page: page) : const [];
         case 'lnr_popular':
-          return p.popular(page: page);
+          return await p.popular(page: page);
+        case 'miru_latest':
+          return await p.popular(page: page);
         case 'cs_mainpage':
           return (p is CloudStreamProvider && more.categoryId != null)
-              ? p.browseMainPage(more.categoryId!, page)
+              ? await p.browseMainPage(more.categoryId!, page)
               : const [];
         default:
           return const [];

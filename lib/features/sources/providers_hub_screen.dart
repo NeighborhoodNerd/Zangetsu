@@ -7,6 +7,7 @@ import '../../core/app_mode.dart';
 import '../../core/di/injector.dart';
 import '../../core/lnreader/lnreader_manager.dart';
 import '../../core/mihon/mihon_manager.dart';
+import '../../core/miru/miru_manager.dart';
 import '../../core/models/provider_info.dart';
 import '../../core/provider/cloudstream_provider.dart';
 import '../../core/provider/provider_manager.dart';
@@ -23,6 +24,7 @@ import 'bloc/sources_state.dart';
 import 'cloudstream_sources_screen.dart';
 import 'lnreader_sources_screen.dart';
 import 'mihon_sources_screen.dart';
+import 'miru_sources_screen.dart';
 import 'zangetsu_sources_screen.dart';
 
 const Widget _kChevron = Icon(
@@ -101,6 +103,7 @@ class _HubPhoneView extends StatelessWidget {
     // test that never registers LnReaderManager doesn't crash reading it,
     // same purpose the Mihon platform check serves.
     final showLnReader = sl.isRegistered<LnReaderManager>();
+    final showMiru = sl.isRegistered<MiruManager>();
 
     final csGroups = sl<CloudStreamManager>().repoGroups;
     final csInstalled = csGroups.fold<int>(0, (s, g) => s + g.sources.length);
@@ -109,6 +112,8 @@ class _HubPhoneView extends StatelessWidget {
     final mihonCount = sl<MihonManager>().all.length;
     final lnrCount =
         showLnReader ? sl<LnReaderManager>().installedSources.length : 0;
+    final miruCount =
+        showMiru ? sl<MiruManager>().installedSources.length : 0;
 
     // Read-only pending-update counts. Zangetsu reuses SourcesState's own
     // installed-vs-manifest comparison (same result the Zangetsu screen shows);
@@ -128,9 +133,14 @@ class _HubPhoneView extends StatelessWidget {
         (showCs ? csInstalled : 0) +
         (showAniyomi ? aniCount : 0) +
         (showMihon ? mihonCount : 0) +
-        (showLnReader ? lnrCount : 0);
+        (showLnReader ? lnrCount : 0) +
+        (showMiru ? miruCount : 0);
     final ecoCount =
-        1 + (showCs ? 1 : 0) + (showAniyomi ? 1 : 0) + (showMihon ? 1 : 0);
+        1 +
+        (showCs ? 1 : 0) +
+        (showAniyomi ? 1 : 0) +
+        (showMihon ? 1 : 0) +
+        (showMiru ? 1 : 0);
 
     final activeId = sl<ActiveSourceCubit>().state;
     final activeName = activeId.isEmpty ? 'None' : _activeSourceLabel(activeId);
@@ -138,8 +148,14 @@ class _HubPhoneView extends StatelessWidget {
     final activeIsAni = activeId.startsWith('ani:');
     final activeIsMihon = activeId.startsWith('mihon:');
     final activeIsLnReader = activeId.startsWith('lnr:');
+    final activeIsMiru = activeId.startsWith('miru:');
     final activeIsZangetsu =
-        activeId.isNotEmpty && !activeIsCs && !activeIsAni && !activeIsMihon;
+        activeId.isNotEmpty &&
+        !activeIsCs &&
+        !activeIsAni &&
+        !activeIsMihon &&
+        !activeIsLnReader &&
+        !activeIsMiru;
 
     // Manga/novel sources are also Zangetsu JS providers under the hood, but
     // get their own hub entry (Task E3) so reading sources read as visibly
@@ -162,10 +178,9 @@ class _HubPhoneView extends StatelessWidget {
         children: [
           _HubHeader(
             total: total,
-            // +1 for the always-shown Manga & Novel row — not a separate
-            // ecosystem count (ecoCount itself is untouched, still just
-            // Zangetsu/CS/Aniyomi/Mihon), just the header copy matching
-            // what's on screen.
+            // +1 for the always-shown Manga & Novel row. ecoCount is
+            // Zangetsu/CS/Aniyomi/Mihon plus Miru when that manager is
+            // registered; LNReader lives in the Manga & Novel +1.
             ecoCount: ecoCount + 1,
             activeName: activeName,
             totalUpdates: totalUpdates,
@@ -211,6 +226,24 @@ class _HubPhoneView extends StatelessWidget {
               onTap: () => open(const AniyomiSourcesScreen()),
             ),
           ],
+          // Miru's catalog mixes bangumi (video), manga, and fikushon
+          // (novels). A third section keeps it out of both STREAMING and
+          // MANGA & NOVEL — those headers would each be a lie for one of
+          // the three types.
+          if (showMiru) ...[
+            const SizedBox(height: 28),
+            const _SectionLabel('VIDEO + READING'),
+            const SizedBox(height: 12),
+            _EcoRow(
+              icon: Icons.extension_rounded,
+              title: 'Miru',
+              desc: 'Video, manga, and novel extensions',
+              info: '$miruCount sources',
+              active: activeIsMiru,
+              updateCount: 0,
+              onTap: () => open(const MiruSourcesScreen()),
+            ),
+          ],
           // Reading ecosystems live under their own header so a manga/novel
           // source never reads as a streaming one. Mihon (manga) and LNReader
           // (novel) sit side by side here — the Zangetsu reading row was
@@ -253,8 +286,8 @@ class _HubPhoneView extends StatelessWidget {
   }
 }
 
-/// Small all-caps label that groups the ecosystem rows into Streaming vs
-/// Manga & Novel. Uses the same [AppText.overline] the tracker sheet's section
+/// Small all-caps label that groups the ecosystem rows into Streaming,
+/// mixed video+reading (Miru), and Manga & Novel. Uses the same [AppText.overline] the tracker sheet's section
 /// labels use, so the hub matches the rest of the app.
 class _SectionLabel extends StatelessWidget {
   const _SectionLabel(this.text);
@@ -283,6 +316,11 @@ String _activeSourceLabel(String id) {
   if (id.startsWith('lnr:')) {
     return sl.isRegistered<LnReaderManager>()
         ? (sl<LnReaderManager>().metaFor(id.substring(4))?.name ?? id)
+        : id;
+  }
+  if (id.startsWith('miru:')) {
+    return sl.isRegistered<MiruManager>()
+        ? (sl<MiruManager>().get(id)?.displayName ?? id)
         : id;
   }
   final e = sl<ProviderRegistry>().entryFor(id);
@@ -622,6 +660,15 @@ class _HubTvViewState extends State<_HubTvView> {
                           subtitle: _aniyomiSubtitle(),
                           tint: _aniGreen,
                           onTap: () => _open(const AniyomiSourcesScreen()),
+                        ),
+                      if (sl.isRegistered<MiruManager>())
+                        row(
+                          icon: Icons.extension_rounded,
+                          title: 'Miru',
+                          subtitle:
+                              '${sl<MiruManager>().installedSources.length} installed',
+                          tint: AppColors.accent,
+                          onTap: () => _open(const MiruSourcesScreen()),
                         ),
                     ],
                   ),

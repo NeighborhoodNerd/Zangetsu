@@ -5,6 +5,7 @@ import '../di/injector.dart';
 import '../i18n/source_languages.dart';
 import '../lnreader/lnreader_manager.dart';
 import '../mihon/mihon_manager.dart';
+import '../miru/miru_manager.dart';
 import '../prefs/source_lang_prefs.dart';
 import '../mode/content_mode.dart';
 import '../mode/content_mode_cubit.dart';
@@ -188,6 +189,26 @@ SourceBuckets categorizedSources() {
       novel.add((id: p.id, label: 'LNReader · ${p.name}', repo: 'LNReader'));
     }
   }
+  if (sl.isRegistered<MiruManager>()) {
+    for (final row in sl<MiruManager>().installedSources) {
+      final p = sl<MiruManager>().get(row.id);
+      if (p == null) continue;
+      if (!p.meta.enabled) continue;
+      if (p.meta.nsfw && !nsfwEnabled) continue;
+      final label = 'Miru · ${p.displayName}';
+      final repo = p.meta.lang.isNotEmpty ? 'Miru · ${p.meta.lang}' : 'Miru';
+      final item = (id: p.sourceId, label: label, repo: repo);
+      switch (p.meta.providerType) {
+        case ProviderType.manga:
+          manga.add(item);
+        case ProviderType.novel:
+          novel.add(item);
+        case ProviderType.anime:
+        case ProviderType.movie:
+          anime.add(item);
+      }
+    }
+  }
 
   anime.sort(byRowLabel);
   movies.sort(byRowLabel);
@@ -211,12 +232,13 @@ ProviderType sourceTypeOf(String id) {
   // touching the `mihon:`/`ani:` lines — no GetIt lookup needed since an
   // LNReader source is novel-only by construction.
   if (id.startsWith('lnr:')) return ProviderType.novel;
-  // Mihon manga extensions. They carry their own `mihon:` prefix precisely so
-  // this resolver can type them as manga WITHOUT disturbing the `ani:` line
-  // below (spec Decision 1) — reusing `ani:` would have typed every manga
-  // source as anime. No GetIt lookup needed: the prefix alone is authoritative,
-  // since a Mihon source is manga-only by construction.
   if (id.startsWith('mihon:')) return ProviderType.manga;
+  if (id.startsWith('miru:')) {
+    if (sl.isRegistered<MiruManager>()) {
+      return sl<MiruManager>().providerTypeOf(id) ?? ProviderType.anime;
+    }
+    return ProviderType.anime;
+  }
   // ponytail: hardcoded to anime — wrong by construction the day manga
   // reuses the Aniyomi extension machinery (a real, planned direction; see
   // watch-app-manga-novel-support). Fix then: read the loaded extension's
@@ -242,6 +264,12 @@ ProviderType _typeOfFromMap(String id, Map<String, String> typeMap) {
   // bucket it was just put in.
   if (id.startsWith('lnr:')) return ProviderType.novel;
   if (id.startsWith('mihon:')) return ProviderType.manga;
+  if (id.startsWith('miru:')) {
+    if (sl.isRegistered<MiruManager>()) {
+      return sl<MiruManager>().providerTypeOf(id) ?? ProviderType.anime;
+    }
+    return ProviderType.anime;
+  }
   if (id.startsWith('ani:')) return ProviderType.anime; // Aniyomi is video-only
   final t = typeMap[id];
   if (t == null) return ProviderType.anime;
@@ -317,6 +345,34 @@ bool hasSourcesFor(ContentMode mode) {
   }
 }
 
+/// Installed-and-enabled sources across every ecosystem. Settings → Providers
+/// uses this for the `N enabled` subtitle. Unlike [categorizedSources], this
+/// does not drop NSFW or language-filtered sources — those are still enabled.
+int enabledProviderCount() {
+  var n = 0;
+  if (sl.isRegistered<ProviderRegistry>()) {
+    n += sl<ProviderRegistry>().getAll().where((e) => e.enabled).length;
+  }
+  if (sl.isRegistered<CloudStreamManager>()) {
+    n += sl<CloudStreamManager>().enabled.length;
+  }
+  if (sl.isRegistered<AniyomiManager>()) {
+    n += sl<AniyomiManager>().all.length;
+  }
+  if (sl.isRegistered<MihonManager>()) {
+    n += sl<MihonManager>().all.length;
+  }
+  if (sl.isRegistered<LnReaderManager>()) {
+    n += sl<LnReaderManager>().installedSources.length;
+  }
+  if (sl.isRegistered<MiruManager>()) {
+    for (final row in sl<MiruManager>().installedSources) {
+      if (sl<MiruManager>().get(row.id)?.meta.enabled ?? true) n++;
+    }
+  }
+  return n;
+}
+
 /// A compact pill button that shows the active source and opens a
 /// bottom-sheet picker when tapped. The selectable list is built
 /// dynamically from the installed-and-enabled providers in
@@ -349,6 +405,7 @@ class SourceSwitcher extends StatelessWidget {
   static const Color _aniColor = Color(0xFFBB8CFF);
   static const Color _mihonColor = Color(0xFF6FD8A8);
   static const Color _lnrColor = Color(0xFFF6A96B); // LNReader (novel) — amber
+  static const Color _miruColor = Color(0xFF7EC8E3); // Miru — ice blue
 
   /// Short colored ecosystem tag + source name for the chip. The tag replaces
   /// the old "CS · " name prefix: still text (a colored dot alone was too
@@ -392,6 +449,16 @@ class SourceSwitcher extends StatelessWidget {
       return (
         'LN',
         _lnrColor,
+        (name != null && name.isNotEmpty) ? name : currentId,
+      );
+    }
+    if (currentId.startsWith('miru:')) {
+      final name = sl.isRegistered<MiruManager>()
+          ? sl<MiruManager>().get(currentId)?.displayName
+          : null;
+      return (
+        'MIRU',
+        _miruColor,
         (name != null && name.isNotEmpty) ? name : currentId,
       );
     }

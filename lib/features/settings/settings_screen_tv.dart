@@ -15,6 +15,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text.dart';
 import '../../core/tv/tv_focusable.dart';
 import '../../core/ui/settings_widgets.dart';
+import '../../core/ui/source_switcher.dart';
 import '../../core/update/update_service.dart';
 import '../auth/auth_cubit.dart';
 import '../auth/auth_screens.dart';
@@ -252,7 +253,7 @@ class _SettingsScreenTvState extends State<SettingsScreenTv> {
 
   @override
   Widget build(BuildContext context) {
-    final enabledCount = _registry.getAll().where((e) => e.enabled).length;
+    final enabledCount = enabledProviderCount();
     final activeId = context.watch<ActiveSourceCubit>().state;
     return Scaffold(
       backgroundColor: AppColors.bg,

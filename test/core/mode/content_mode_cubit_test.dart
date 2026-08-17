@@ -2,8 +2,11 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:watch_app/core/di/injector.dart' show sl;
+import 'package:watch_app/core/miru/miru_extension_service.dart';
+import 'package:watch_app/core/miru/miru_manager.dart';
 import 'package:watch_app/core/mode/content_mode.dart';
 import 'package:watch_app/core/mode/content_mode_cubit.dart';
+import 'package:watch_app/core/models/provider_info.dart';
 import 'package:watch_app/core/repository/source_repository.dart';
 import 'package:watch_app/core/state/active_source_cubit.dart';
 
@@ -32,6 +35,7 @@ void main() {
     await Hive.close();
     await dir.delete(recursive: true);
     if (sl.isRegistered<SourceRepository>()) sl.unregister<SourceRepository>();
+    if (sl.isRegistered<MiruManager>()) sl.unregister<MiruManager>();
   });
 
   test('defaults to anime and persists mode', () async {
@@ -151,4 +155,60 @@ void main() {
     cubit.ensureSourceForMode();
     expect(active.state, 'lnr:wbnovel');
   });
+
+  test(
+    'entering manga mode with a bangumi miru source active lands on the manga '
+    'miru source — @type, not the miru: prefix, decides the mode',
+    () async {
+      sl.registerSingleton<MiruManager>(
+        _StubMiruManager({
+          'miru:bang': ProviderType.anime,
+          'miru:manga': ProviderType.manga,
+        }),
+      );
+      await ActiveSourceCubit.init();
+      final active = ActiveSourceCubit(box: Hive.box(ActiveSourceCubit.boxName));
+      final cubit = await ContentModeCubit.create(active);
+      active.setSource('miru:bang');
+      sl.registerSingleton<SourceRepository>(
+        _FakeSourceRepository(['miru:bang', 'miru:manga']),
+      );
+
+      await cubit.setMode(ContentMode.manga);
+      expect(active.state, 'miru:manga');
+    },
+  );
+
+  test('a fikushon miru source is selected when entering novel mode', () async {
+    sl.registerSingleton<MiruManager>(
+      _StubMiruManager({
+        'miru:bang': ProviderType.anime,
+        'miru:novel': ProviderType.novel,
+      }),
+    );
+    await ActiveSourceCubit.init();
+    final active = ActiveSourceCubit(box: Hive.box(ActiveSourceCubit.boxName));
+    final cubit = await ContentModeCubit.create(active);
+    active.setSource('miru:bang');
+    sl.registerSingleton<SourceRepository>(
+      _FakeSourceRepository(['miru:bang', 'miru:novel']),
+    );
+
+    await cubit.setMode(ContentMode.novel);
+    expect(active.state, 'miru:novel');
+  });
+}
+
+class _StubMiruManager extends MiruManager {
+  _StubMiruManager(this.types)
+    : super(
+        service: MiruExtensionService(httpGet: (_) async => ''),
+        fetch: (url, init) async =>
+            throw StateError('fetch should not run in cubit tests'),
+      );
+
+  final Map<String, ProviderType> types;
+
+  @override
+  ProviderType? providerTypeOf(String sourceId) => types[sourceId];
 }

@@ -10,6 +10,7 @@ import 'package:watch_app/core/aniyomi/aniyomi_repo.dart';
 import 'package:watch_app/core/backup/sources_backup.dart';
 import 'package:watch_app/core/lnreader/lnreader_extension_service.dart';
 import 'package:watch_app/core/mihon/mihon_extension_service.dart';
+import 'package:watch_app/core/miru/miru_extension_service.dart';
 import 'package:watch_app/core/mihon/mihon_manager.dart';
 import 'package:watch_app/core/mihon/mihon_provider.dart';
 import 'package:watch_app/core/provider/provider_manager.dart'
@@ -615,6 +616,86 @@ void main() {
 
     expect(failures, isEmpty);
   });
+
+  test('build: includes miru repo urls and installed pkgs', () async {
+    final repoBox = await Hive.openBox<String>('miru_repos');
+    await repoBox.add('https://repo.example/miru/index.json');
+    final box = await Hive.openBox<Map>('miru_plugins');
+    await box.put('bang.test', {'package': 'bang.test', 'name': 'Bang'});
+
+    final backup = SourcesBackup(_StubRepos([]), _StubProviderRegistry([]), null);
+    final data = backup.build();
+
+    expect(data['miruRepoUrls'], ['https://repo.example/miru/index.json']);
+    expect(data['miruPkgs'], ['bang.test']);
+  });
+
+  test('merge: adds missing miru repo urls, skips existing', () async {
+    final repoBox = await Hive.openBox<String>('miru_repos');
+    await repoBox.add('https://existing.example/miru/index.json');
+
+    final backup = SourcesBackup(_StubRepos([]), _StubProviderRegistry([]), null);
+    await backup.merge({
+      'miruRepoUrls': [
+        'https://existing.example/miru/index.json',
+        'https://new.example/miru/index.json',
+      ],
+    });
+
+    expect(repoBox.values.toList(), [
+      'https://existing.example/miru/index.json',
+      'https://new.example/miru/index.json',
+    ]);
+  });
+
+  test(
+    'merge: installs a missing miru plugin from a tracked repo, records not-found',
+    () async {
+      await Hive.openBox<Map>('miru_plugins');
+      await Hive.openBox<dynamic>('miru_settings');
+      const indexUrl = 'https://repo.example/miru/index.json';
+      final miru = MiruExtensionService(httpGet: (url) async {
+        if (url == indexUrl) {
+          return jsonEncode([
+            {
+              'package': 'bang.test',
+              'name': 'Bang',
+              'version': '1.0.0',
+              'lang': 'en',
+              'type': 'bangumi',
+              'webSite': 'https://bang.test',
+              'url': 'bang.test.js',
+            },
+          ]);
+        }
+        return '''
+// ==MiruExtension==
+// @package bang.test
+// @name Bang
+// @type bangumi
+// @webSite https://bang.test
+// ==/MiruExtension==
+export default class extends Extension {}
+''';
+      });
+
+      final backup = SourcesBackup(
+        _StubRepos([]),
+        _StubProviderRegistry([]),
+        null,
+        miru: miru,
+      );
+
+      final failures = await backup.merge({
+        'miruRepoUrls': [indexUrl],
+        'miruPkgs': ['bang.test', 'ghost'],
+      });
+
+      expect(failures, ['Miru source: ghost']);
+      expect(miru.installed().map((m) => m.package), contains('bang.test'));
+      expect(miru.jsFor('bang.test'), contains('export default class'));
+    },
+  );
 }
 
 /// Stub [AniyomiExtensionService]: records installFromRepo calls and pretends

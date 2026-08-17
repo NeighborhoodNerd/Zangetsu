@@ -6,6 +6,8 @@ import '../aniyomi/aniyomi_repo.dart';
 import '../lnreader/lnreader_extension_service.dart';
 import '../mihon/mihon_extension_service.dart';
 import '../mihon/mihon_repo.dart';
+import '../miru/miru_extension_service.dart';
+import '../miru/miru_script.dart';
 import '../provider/cloudstream_provider.dart';
 import '../provider/provider_registry.dart';
 import '../provider/provider_repo_registry.dart';
@@ -39,11 +41,13 @@ class SourcesBackup {
     Future<List<AniyomiRepoEntry>> Function(String repoBaseUrl)?
         fetchMihonIndex,
     LnReaderExtensionService? lnreader,
+    MiruExtensionService? miru,
   })  : _ani = aniyomi,
         _fetchAniyomiIndex = fetchAniyomiIndex ?? AniyomiRepo.fetchIndex,
         _mihon = mihon,
         _fetchMihonIndex = fetchMihonIndex ?? MihonRepo.fetchIndex,
-        _lnr = lnreader;
+        _lnr = lnreader,
+        _miru = miru;
 
   final ProviderReposRegistry _repos;
   final ProviderRegistry _registry;
@@ -66,6 +70,9 @@ class SourcesBackup {
   /// Null in tests that don't need LNReader restore.
   final LnReaderExtensionService? _lnr;
 
+  /// Null in tests that don't need Miru restore.
+  final MiruExtensionService? _miru;
+
   static const String _psBoxName = 'provider_settings';
 
   // The Hive key under which CloudStreamManager persists its repo list.
@@ -87,6 +94,7 @@ class SourcesBackup {
   // `lib/features/sources/lnreader_sources_screen.dart`. Hardcoded here
   // rather than imported, same reason as `_aniReposBoxName` above.
   static const String _lnrReposBoxName = 'lnreader_repos';
+  static const String _miruReposBoxName = 'miru_repos';
 
   // ── build ──────────────────────────────────────────────────────────────────
 
@@ -103,6 +111,8 @@ class SourcesBackup {
   /// - `mihonPkgs` — installed Mihon extension package names.
   /// - `lnreaderRepoUrls` — tracked LNReader (novel) repo index URLs.
   /// - `lnreaderPkgs` — installed LNReader (novel) plugin ids.
+  /// - `miruRepoUrls` — tracked Miru catalog `index.json` URLs.
+  /// - `miruPkgs` — installed Miru extension package ids.
   /// - `settings`   — contents of the `provider_settings` Hive box, or `{}`.
   Map<String, dynamic> build() => {
         'jsRepoUrls': _repos.getAll().map((r) => r.url).toList(),
@@ -115,6 +125,8 @@ class SourcesBackup {
         'mihonPkgs': _readMihonPkgs(),
         'lnreaderRepoUrls': _readLnReaderRepoUrls(),
         'lnreaderPkgs': _readLnReaderPkgs(),
+        'miruRepoUrls': _readMiruRepoUrls(),
+        'miruPkgs': _readMiruPkgs(),
         'settings': _readProviderSettings(),
       };
 
@@ -350,6 +362,58 @@ class SourcesBackup {
       }
     }
 
+    // Miru repos --------------------------------------------------------------
+    final miruRepoUrls =
+        (data['miruRepoUrls'] as List?)?.cast<String>() ?? const <String>[];
+    if (miruRepoUrls.isNotEmpty) {
+      try {
+        final box = Hive.isBoxOpen(_miruReposBoxName)
+            ? Hive.box<String>(_miruReposBoxName)
+            : await openBoxSafely<String>(_miruReposBoxName);
+        for (final url in miruRepoUrls) {
+          if (box.values.contains(url)) continue;
+          await box.add(url);
+        }
+      } catch (_) {
+        failures.add('Miru repos');
+      }
+    }
+
+    final miruPkgs =
+        (data['miruPkgs'] as List?)?.cast<String>() ?? const <String>[];
+    if (miruPkgs.isNotEmpty && _miru != null) {
+      final installedIds = _miru.installed().map((m) => m.package).toSet();
+      final missing =
+          miruPkgs.where((id) => !installedIds.contains(id)).toList();
+      if (missing.isNotEmpty) {
+        final repoUrls = <String>{
+          ...miruRepoUrls,
+          if (Hive.isBoxOpen(_miruReposBoxName))
+            ...Hive.box<String>(_miruReposBoxName).values,
+        };
+        final entriesById = <String, MiruExtensionMeta>{};
+        for (final url in repoUrls) {
+          try {
+            for (final m in await _miru.fetchIndex(url)) {
+              entriesById.putIfAbsent(m.package, () => m);
+            }
+          } catch (_) {}
+        }
+        for (final id in missing) {
+          final meta = entriesById[id];
+          if (meta == null) {
+            failures.add('Miru source: $id');
+            continue;
+          }
+          try {
+            await _miru.install(meta);
+          } catch (_) {
+            failures.add('Miru source: ${meta.name}');
+          }
+        }
+      }
+    }
+
     // Installed providers (union: only add those not already present) ---------
     final providers = (data['providers'] as List?) ?? const [];
     for (final raw in providers) {
@@ -463,6 +527,17 @@ class SourcesBackup {
               .map((k) => k.toString())
               .toList()
           : const [];
+
+  List<String> _readMiruRepoUrls() => Hive.isBoxOpen(_miruReposBoxName)
+      ? Hive.box<String>(_miruReposBoxName).values.toList()
+      : const [];
+
+  List<String> _readMiruPkgs() => Hive.isBoxOpen(MiruExtensionService.boxName)
+      ? Hive.box<Map>(MiruExtensionService.boxName)
+          .keys
+          .map((k) => k.toString())
+          .toList()
+      : const [];
 
   /// Reads the `provider_settings` Hive box as `{compositeKey: settingsMap}`.
   Map<String, dynamic> _readProviderSettings() {

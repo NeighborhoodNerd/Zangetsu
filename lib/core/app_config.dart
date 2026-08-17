@@ -26,6 +26,11 @@ const String kDiscordInviteUrl = 'https://discord.gg/938JJBn44';
 const String kAnnouncementsUrl =
     'https://raw.githubusercontent.com/Spyou/Zangetsu/main/announcements.json';
 
+/// Official Miru extension catalog. Shown as the add-repo placeholder —
+/// never auto-installed. See `lib/core/miru/miru_repo.dart`.
+const String kMiruOfficialRepoUrl =
+    'https://raw.githubusercontent.com/miru-project/repo/main/index.json';
+
 /// TMDB API key for movie/TV trailer lookups (TrailerService). Anime trailers
 /// use AniList and need no key. Supply via `--dart-define=TMDB_API_KEY=...`,
 /// or paste a literal default below. When empty, movie/TV trailers are

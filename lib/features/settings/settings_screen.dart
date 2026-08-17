@@ -542,7 +542,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     if (sl<AppMode>().isTv) return const SettingsScreenTv();
-    final enabledCount = _registry.getAll().where((e) => e.enabled).length;
+    final enabledCount = enabledProviderCount();
     final activeId = context.watch<ActiveSourceCubit>().state;
     final connectedCount = <Tracker>[
       sl<AniListService>(),
@@ -656,7 +656,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         icon: Icons.dns_rounded,
         title: 'Providers',
         subtitle: '$enabledCount enabled',
-        keywords: 'providers sources extensions plugins cloudstream aniyomi repository',
+        keywords:
+            'providers sources extensions plugins cloudstream aniyomi mihon '
+            'lnreader miru repository',
         onTap: () async {
           await _push(const SourcesScreen());
           if (mounted) setState(() {});

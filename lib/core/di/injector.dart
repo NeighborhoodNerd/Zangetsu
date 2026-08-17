@@ -76,6 +76,9 @@ import '../aniyomi/aniyomi_provider.dart';
 import '../lnreader/lnreader_extension_service.dart';
 import '../lnreader/lnreader_manager.dart';
 import '../lnreader/novel_lang_prefs.dart';
+import '../miru/miru_extension_service.dart';
+import '../miru/miru_manager.dart';
+import '../miru/miru_runtime.dart';
 import '../prefs/source_lang_prefs.dart';
 import '../lnreader/lnreader_runtime.dart' show LnReaderHttpResponse;
 import '../mihon/mihon_extension_service.dart';
@@ -514,6 +517,52 @@ Future<void> initDependencies() async {
     await openBoxSafely<String>('lnreader_repos');
   }
 
+  // Miru JS extensions — bangumi/manga/fikushon from a user-added index.json.
+  // Same platform story as LNReader (plain JS, no DEX), same laziness: init()
+  // only opens Hive, QuickJS is built on the first data call.
+  final miruService = MiruExtensionService(
+    httpGet: (url) async {
+      final res = await dio.get<String>(
+        url,
+        options: Options(responseType: ResponseType.plain),
+      );
+      return res.data ?? '';
+    },
+  );
+  final miruManager = MiruManager(
+    service: miruService,
+    fetch: (url, init) async {
+      final pluginHeaders = init['headers'] is Map
+          ? Map<String, dynamic>.from(init['headers'] as Map)
+          : const <String, dynamic>{};
+      final method = (init['method'] as String?)?.toUpperCase() ?? 'GET';
+      final res = await dio.request<String>(
+        url,
+        data: init['body'],
+        queryParameters: init['queryParameters'] is Map
+            ? Map<String, dynamic>.from(init['queryParameters'] as Map)
+            : null,
+        options: Options(
+          method: method,
+          headers: pluginHeaders,
+          responseType: ResponseType.plain,
+          validateStatus: (_) => true,
+        ),
+      );
+      return MiruHttpResponse(
+        status: res.statusCode ?? 0,
+        body: res.data ?? '',
+        url: res.realUri.toString(),
+      );
+    },
+  );
+  sl.registerSingleton<MiruExtensionService>(miruService);
+  sl.registerSingleton<MiruManager>(miruManager);
+  await miruManager.init();
+  if (!Hive.isBoxOpen('miru_repos')) {
+    await openBoxSafely<String>('miru_repos');
+  }
+
   // --- Provider registry data layer ---------------------------------
   await ProviderReposRegistry.init();
   await ProviderRegistry.init();
@@ -534,7 +583,8 @@ Future<void> initDependencies() async {
         sl.isRegistered<CloudStreamManager>() ? sl<CloudStreamManager>() : null,
         aniyomi: AniyomiExtensionService(),
         mihon: MihonExtensionService(),
-        lnreader: lnrService),
+        lnreader: lnrService,
+        miru: miruService),
     LibraryBackup(),
     SettingsBackup(),
   ));
@@ -715,6 +765,7 @@ Future<void> initDependencies() async {
         ...manager.installedIds,
         ...csManager.all.map((p) => p.sourceId),
         ...lnrManager.installedSources.map((s) => s.id),
+        ...miruManager.installedSources.map((s) => s.id),
       },
     ),
   );
@@ -734,6 +785,7 @@ Future<void> initDependencies() async {
       aniManager: aniyomiManager,
       mihonManager: mihonManager,
       lnrManager: lnrManager,
+      miruManager: miruManager,
       activeSource: sl<ActiveSourceCubit>(),
       prefs: sl<PlaybackPrefs>(),
       // The language sets the sources screens already filter their lists by.

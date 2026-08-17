@@ -6,6 +6,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive/hive.dart';
 
 import '../di/injector.dart';
+import '../miru/miru_manager.dart';
+import '../models/provider_info.dart';
 import '../repository/source_repository.dart';
 import '../state/active_source_cubit.dart';
 import 'content_mode.dart';
@@ -47,15 +49,27 @@ class ContentModeCubit extends Cubit<ContentMode> {
     return sl<SourceRepository>().loadedSources.any((s) => s.id == id);
   }
 
-  /// Which mode a source id belongs to, by id prefix — no manager lookup, so
-  /// it's cheap and can't throw when the registry isn't up yet: `lnr:` = novel,
-  /// `mihon:` = manga, everything else (JS / CloudStream / Aniyomi) = anime.
-  /// Matches the prefix rules in [sourceTypeOf].
-  static bool _sourceInMode(String id, ContentMode m) => switch (m) {
-    ContentMode.novel => id.startsWith('lnr:'),
-    ContentMode.manga => id.startsWith('mihon:'),
-    ContentMode.anime => !id.startsWith('lnr:') && !id.startsWith('mihon:'),
-  };
+  /// Which mode a source id belongs to. Prefix rules cover LNReader/Mihon;
+  /// `miru:` looks up the installed extension's `@type` because one catalog
+  /// mixes bangumi/manga/fikushon.
+  static bool _sourceInMode(String id, ContentMode m) {
+    if (id.startsWith('miru:')) {
+      final type = sl.isRegistered<MiruManager>()
+          ? (sl<MiruManager>().providerTypeOf(id) ?? ProviderType.anime)
+          : ProviderType.anime;
+      return switch (m) {
+        ContentMode.anime =>
+          type == ProviderType.anime || type == ProviderType.movie,
+        ContentMode.manga => type == ProviderType.manga,
+        ContentMode.novel => type == ProviderType.novel,
+      };
+    }
+    return switch (m) {
+      ContentMode.novel => id.startsWith('lnr:'),
+      ContentMode.manga => id.startsWith('mihon:'),
+      ContentMode.anime => !id.startsWith('lnr:') && !id.startsWith('mihon:'),
+    };
+  }
 
   /// No valid remembered source for [m] — don't leave a source from another
   /// mode active (the "enter Novel and the header still shows an anime source"
